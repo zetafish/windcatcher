@@ -1,5 +1,6 @@
 (ns windcatcher.rocksdb
-  (:require [taoensso.nippy :as nippy])
+  (:require [taoensso.nippy :as nippy]
+            [taoensso.timbre :as log])
   (:import (org.rocksdb DbPath
                         RocksDB
                         Options)
@@ -23,12 +24,14 @@
 
 (defn open-db
   [path]
+  (log/info "Open DB")
   (RocksDB/open (doto (Options.)
                   (.setCreateIfMissing true))
                 path))
 
 (defn close-db
   [db]
+  (log/info "Close DB")
   (.close db))
 
 (defn get
@@ -48,3 +51,10 @@
       (.write db batch)
       (finally
         (.close batch)))))
+
+(defn update!
+  [db k f & args]
+  (let [old (get db k)
+        new (apply f old args)]
+    (put! db k new)
+    new))
