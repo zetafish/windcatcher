@@ -46,5 +46,3 @@
   (mount/start)
   (add-shutdown-hook mount/stop)
   (a/<!! shutdown-ch))
-
-(mount/start)
