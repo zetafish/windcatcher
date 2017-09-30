@@ -1,4 +1,4 @@
-.nrepl-port
+.nrepl-*
 hs_err_pid*.log
 target/
 data/

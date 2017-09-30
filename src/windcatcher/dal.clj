@@ -1,17 +1,26 @@
 (ns windcatcher.dal
   (:require [windcatcher.rocksdb :as db]
-            [clojure.set :as set]))
+            [clojure.set :as set]
+            [mount.core :as mount])
+  (:import (java.util UUID)))
 
-(defn update-membership
-  [m add del]
-  (-> m
-      (update :s set/union (set add))
-      (update :s set/difference (set del))))
+(mount/defstate store
+  :start (db/open-db "data")
+  :stop (db/close-db store))
 
-(defn apply-membership-delta
-  [db {:keys [user add del]}]
-  (db/update! db user update-membership add del))
+(defn user-id->key
+  [user-id]
+  (str "user/" (UUID/nameUUIDFromBytes (.getBytes (str user-id)))))
 
-#_(-> {}
-    (update-membership [1 2 3] [])
-    (update-membership [10 20 30] [2 3]))
+(defn get-user
+  [user-id]
+  (let [k (user-id->key user-id)]
+    (db/get store k)))
+
+(defn update-user
+  [user-id add del]
+  (let [k (user-id->key user-id)]
+    (db/update! store user-id
+                (fn [user]
+                  (update user :s set/union (set add))
+                  (update user :s set/difference (set del))))))

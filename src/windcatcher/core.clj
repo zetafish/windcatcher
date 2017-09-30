@@ -1,88 +1,50 @@
 (ns windcatcher.core
   (:gen-class)
   (:require [mount.core :as mount]
-            [windcatcher.rocksdb :as db]
+            [compojure.core :refer [GET POST defroutes]]
             [windcatcher.dal :as dal]
-            [clojure.string :as str])
-  (:import (java.util UUID)))
+            [windcatcher.simulation :as sim]
+            [clojure.string :as str]
+            [taoensso.timbre :as log]
+            [org.httpkit.server :as web]
+            [clojure.core.async :as a]))
 
-(mount/defstate db
-  :start (db/open-db "data")
-  :stop (db/close-db db))
+(mount/defstate shutdown-ch
+  :start (a/chan))
 
-(def population (* 60 1000 1000))
+(defroutes routes
+  (POST "/shutdown" []
+    (a/put! shutdown-ch :token)
+    {:status 204})
+  (POST "/simulation/start" []
+    (sim/start-simulation)
+    {:status 204})
+  (GET "/users/:id" [n]
+    (dal/get-user n)
+    {:status 204}))
 
-(def segment-offset 1000000)
+(defn start-server
+  [host port]
+  (log/infof "Starting web server on %s:%s" host port)
+  (web/run-server routes {:ip host :port port}))
 
-(def total-segments 6000)
+(defn stop-server
+  [server]
+  (log/infof "Stopping web server")
+  (server))
 
-(def batch-size 50000)
-
-(defn user
-  [n]
-  (UUID/nameUUIDFromBytes (.getBytes (str n))))
-
-(defn rand-segments
-  [n]
-  (map #(+ segment-offset %)
-       (repeatedly n #(rand-int total-segments))))
-
-(defn rand-update
-  [n]
-  {:user (user n)
-   :add (rand-segments 600)
-   :del (rand-segments 600)})
+(mount/defstate server
+  :start (start-server "0.0.0.0" 5000)
+  :stop (stop-server server))
 
 (defn add-shutdown-hook
   [hook]
   (.addShutdownHook (Runtime/getRuntime)
                     (Thread. hook)))
 
-(defn tps
-  []
-  (let [mark (atom nil)]
-    (fn []
-      (let [old @mark
-            new (reset! mark (System/nanoTime))]
-        (when old
-          (int (/ 1E9 (- new old))))))))
-
-(defn make-ticker
-  []
-  (let [window (* 1 1E9)
-        state (atom {:start (System/nanoTime)
-                     :count 0
-                     :total 0})]
-    (fn []
-      (swap! state #(-> %
-                        (update :count inc)
-                        (update :total inc)))
-      (let [old @state
-            elapsed (- (System/nanoTime) (:start old))]
-        (when (> elapsed window)
-          (println (format "Total: %s, TPS: %s"
-                           (:total old)
-                           (/ (* (:count old) 1E9) elapsed)))
-          (swap! state assoc
-                 :start (System/nanoTime)
-                 :count 0))))))
-
-(defn run-simulation
-  []
-  (let [tick (make-ticker)]
-    (loop [g 0 t 0]
-      (let [add (rand-segments 600)
-            del (rand-segments 600)]
-        (dotimes [n population]
-          (let [update {:user (user n)
-                        :add add
-                        :del del}]
-            (dal/apply-membership-delta db update)
-            (tick))))
-      (recur (inc g) (+ t population)))))
-
-
 (defn -main [& args]
   (mount/start)
   (add-shutdown-hook mount/stop)
-  (run-simulation))
+  (a/<!! shutdown-ch))
+
+(mount/start)
